@@ -31,7 +31,7 @@ A PowerShell script to backup Azure API Management (APIM) services using the ARM
 | `ResourceGroupName` | String | ✅ | Resource group containing the APIM service |
 | `ApimServiceName` | String | ✅ | Name of the API Management service |
 | `StorageAccountName` | String | ✅ | Storage account name for backup |
-| `StorageAccountKey` | String | ✅ | Storage account access key |
+| `ManagedIdentityClientId` | String | ✅ | Client ID of the User Assigned Managed Identity with access to the storage account |
 | `ContainerName` | String | ✅ | Storage container name |
 | `BackupName` | String | ✅ | Backup file name (without extension) |
 
@@ -47,7 +47,7 @@ A PowerShell script to backup Azure API Management (APIM) services using the ARM
                   -ResourceGroupName "rg-apim" `
                   -ApimServiceName "my-apim-service" `
                   -StorageAccountName "mystorageaccount" `
-                  -StorageAccountKey "storage-account-key" `
+                  -ManagedIdentityClientId "00000000-0000-0000-0000-000000000000" `
                   -ContainerName "apim-backups" `
                   -BackupName "backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 ```
@@ -66,7 +66,7 @@ $backupName = "apim-prod-backup-$timestamp"
                   -ResourceGroupName "rg-production" `
                   -ApimServiceName "apim-prod" `
                   -StorageAccountName "prodbackupstorage" `
-                  -StorageAccountKey $env:STORAGE_KEY `
+                  -ManagedIdentityClientId $env:UAMI_CLIENT_ID `
                   -ContainerName "apim-backups" `
                   -BackupName $backupName
 ```
@@ -107,12 +107,20 @@ $backupName = "apim-prod-backup-$timestamp"
                               --account-name <storage-account-name>
    ```
 
-3. **Get Access Key:**
-   ```bash
-   az storage account keys list --account-name <storage-account-name> \
-                               --resource-group <resource-group> \
-                               --query '[0].value' -o tsv
-   ```
+3. **Assign Role to User Assigned Managed Identity:** (No storage keys required)
+    ```bash
+    # Create (or reuse) a User Assigned Managed Identity
+    az identity create -g <resource-group> -n <uami-name>
+
+    # Get its clientId (value to pass as ManagedIdentityClientId)
+    az identity show -g <resource-group> -n <uami-name> --query clientId -o tsv
+
+    # Grant Blob Data Contributor role on the storage account
+    az role assignment create \
+       --assignee <uami-client-id> \
+       --role "Storage Blob Data Contributor" \
+       --scope "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Storage/storageAccounts/<storage-account-name>"
+    ```
 
 ## 📊 Sample Output
 
@@ -127,6 +135,7 @@ $backupName = "apim-prod-backup-$timestamp"
    🌐 APIM Service: my-apim-service
    💾 Storage Account: mystorageaccount
    📁 Container: apim-backups
+   🪪 Managed Identity Client Id: 00000000-0000-0000-0000-000000000000
    📄 Backup Name: backup-20250107-143052
 
 🔐 Acquiring Entra token...
