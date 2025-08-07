@@ -193,7 +193,15 @@ function Backup-ApiManagement {
         # DEBUG: Print everything for Postman testing
         Write-ColorOutput "   🔧 DEBUG INFO FOR POSTMAN OR SOME BULLSHIT LIKE THAT:" "Magenta"
         Write-ColorOutput "   URL: $backupEndpoint" "Yellow"
-        Write-ColorOutput "   Authorization: Bearer $AccessToken" "Yellow"
+        
+        # Redact token for security - show first 15 and last 15 chars
+        $redactedToken = if ($AccessToken.Length -gt 30) {
+            $AccessToken.Substring(0, 15) + "..." + $AccessToken.Substring($AccessToken.Length - 15)
+        } else {
+            "***REDACTED***"
+        }
+        Write-ColorOutput "   Authorization: Bearer $redactedToken" "Yellow"
+        
         Write-ColorOutput "   Content-Type: application/json" "Yellow"
         Write-ColorOutput "   Body:" "Yellow"
         Write-Host $backupBody -ForegroundColor Yellow
