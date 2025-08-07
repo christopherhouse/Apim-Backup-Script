@@ -5,11 +5,12 @@ A PowerShell script to backup Azure API Management (APIM) services using the ARM
 ## ✨ Features
 
 - 🔐 Secure authentication using Azure Entra ID (Azure AD) client credentials
-- 🎨 Colorful and engaging console output with emojis
-- 📊 Detailed progress reporting
-- ❌ Comprehensive error handling
-- 🛡️ Secure token management
-- 📦 Automated backup to Azure Storage
+- � Uses APIM's System Assigned Managed Identity for storage access (no storage keys required)
+- �🎨 Colorful and engaging console output with emojis
+- 📊 Detailed progress reporting and error messages
+- ❌ Comprehensive error handling with API response details
+- 🛡️ Secure token management with redacted debug output
+- 📦 Automated backup to Azure Storage using API version 2024-05-01
 
 ## 🚀 Prerequisites
 
@@ -17,8 +18,8 @@ A PowerShell script to backup Azure API Management (APIM) services using the ARM
 - Azure subscription with API Management service
 - Service Principal with appropriate permissions:
   - `API Management Service Contributor` role on the APIM service
-  - `Storage Account Contributor` role on the storage account
 - Azure Storage Account for backup storage
+- APIM service with System Assigned Managed Identity enabled and granted access to storage
 
 ## 📋 Parameters
 
@@ -28,10 +29,11 @@ A PowerShell script to backup Azure API Management (APIM) services using the ARM
 | `ClientId` | String | ✅ | Service principal client ID |
 | `ClientSecret` | String | ✅ | Service principal client secret |
 | `SubscriptionId` | String | ✅ | Azure subscription ID |
-| `ResourceGroupName` | String | ✅ | Resource group containing the APIM service |
+| `ApimResourceGroupName` | String | ✅ | Resource group containing the APIM service |
+| `StorageResourceGroupName` | String | ✅ | Resource group containing the storage account |
 | `ApimServiceName` | String | ✅ | Name of the API Management service |
 | `StorageAccountName` | String | ✅ | Storage account name for backup |
-| `ManagedIdentityClientId` | String | ✅ | Client ID of the User Assigned Managed Identity with access to the storage account |
+| `ManagedIdentityClientId` | String | ✅ | Client ID of the User Assigned Managed Identity with access to storage |
 | `ContainerName` | String | ✅ | Storage container name |
 | `BackupName` | String | ✅ | Backup file name (without extension) |
 
@@ -44,9 +46,10 @@ A PowerShell script to backup Azure API Management (APIM) services using the ARM
                   -ClientId "87654321-4321-4321-4321-210987654321" `
                   -ClientSecret "your-client-secret" `
                   -SubscriptionId "11111111-1111-1111-1111-111111111111" `
-                  -ResourceGroupName "rg-apim" `
+                  -ApimResourceGroupName "rg-apim" `
                   -ApimServiceName "my-apim-service" `
                   -StorageAccountName "mystorageaccount" `
+                  -StorageResourceGroupName "rg-storage" `
                   -ManagedIdentityClientId "00000000-0000-0000-0000-000000000000" `
                   -ContainerName "apim-backups" `
                   -BackupName "backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -63,7 +66,8 @@ $backupName = "apim-prod-backup-$timestamp"
                   -ClientId $env:AZURE_CLIENT_ID `
                   -ClientSecret $env:AZURE_CLIENT_SECRET `
                   -SubscriptionId $env:AZURE_SUBSCRIPTION_ID `
-                  -ResourceGroupName "rg-production" `
+                  -ApimResourceGroupName "rg-apim-production" `
+                  -StorageResourceGroupName "rg-storage-production" `
                   -ApimServiceName "apim-prod" `
                   -StorageAccountName "prodbackupstorage" `
                   -ManagedIdentityClientId $env:UAMI_CLIENT_ID `
@@ -75,28 +79,28 @@ $backupName = "apim-prod-backup-$timestamp"
 
 1. **Create a Service Principal:**
    ```bash
-   az ad sp create-for-rbac --name "apim-backup-sp" --role contributor
-   ```
-
-2. **Assign Required Permissions:**
-   ```bash
-   # API Management Service Contributor
-   az role assignment create --assignee <service-principal-id> \
-                            --role "API Management Service Contributor" \
-                            --scope "/subscriptions/<subscription-id>/resourceGroups/<rg-name>/providers/Microsoft.ApiManagement/service/<apim-name>"
+   # Create service principal with Contributor role at subscription level
+   az ad sp create-for-rbac --name "apim-backup-sp" \
+                           --role "Contributor" \
+                           --scopes "/subscriptions/<subscription-id>"
    
-   # Storage Account Contributor  
-   az role assignment create --assignee <service-principal-id> \
-                            --role "Storage Account Contributor" \
-                            --scope "/subscriptions/<subscription-id>/resourceGroups/<rg-name>/providers/Microsoft.Storage/storageAccounts/<storage-name>"
+   # Note down the appId (clientId), password (clientSecret), and tenant values
    ```
 
-## 🏗️ Setting Up Storage Account
+2. **Assign API Management Service Contributor Role:**
+   ```bash
+   # Grant specific permission to backup APIM services
+   az role assignment create --assignee <service-principal-client-id> \
+                            --role "API Management Service Contributor" \
+                            --scope "/subscriptions/<subscription-id>/resourceGroups/<apim-rg-name>/providers/Microsoft.ApiManagement/service/<apim-service-name>"
+   ```
+
+## 🏗️ Setting Up Storage Account and Managed Identity
 
 1. **Create Storage Account:**
    ```bash
    az storage account create --name <storage-account-name> \
-                            --resource-group <resource-group> \
+                            --resource-group <storage-resource-group> \
                             --location <location> \
                             --sku Standard_LRS
    ```
@@ -107,31 +111,85 @@ $backupName = "apim-prod-backup-$timestamp"
                               --account-name <storage-account-name>
    ```
 
-3. **Assign Role to User Assigned Managed Identity:** (No storage keys required)
-    ```bash
-    # Create (or reuse) a User Assigned Managed Identity
-    az identity create -g <resource-group> -n <uami-name>
+3. **Enable System Assigned Managed Identity on APIM:**
+   ```bash
+   # Enable system assigned managed identity on the APIM service
+   az apim update --name <apim-service-name> \
+                  --resource-group <apim-resource-group> \
+                  --assign-identity
+   
+   # Get the principal ID of the system assigned managed identity
+   az apim show --name <apim-service-name> \
+               --resource-group <apim-resource-group> \
+               --query identity.principalId -o tsv
+   ```
 
-    # Get its clientId (value to pass as ManagedIdentityClientId)
-    az identity show -g <resource-group> -n <uami-name> --query clientId -o tsv
+4. **Grant Storage Access to APIM's System Managed Identity:**
+   ```bash
+   # Grant Storage Blob Data Contributor role to APIM's system managed identity
+   az role assignment create \
+     --assignee <apim-system-identity-principal-id> \
+     --role "Storage Blob Data Contributor" \
+     --scope "/subscriptions/<subscription-id>/resourceGroups/<storage-resource-group>/providers/Microsoft.Storage/storageAccounts/<storage-account-name>"
+   ```
 
-    # Grant Blob Data Contributor role on the storage account
-    az role assignment create \
-       --assignee <uami-client-id> \
-       --role "Storage Blob Data Contributor" \
-       --scope "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Storage/storageAccounts/<storage-account-name>"
-    ```
+5. **Get the System Managed Identity Client ID for the script:**
+   ```bash
+   # Get the client ID (application ID) of the system managed identity
+   az apim show --name <apim-service-name> \
+               --resource-group <apim-resource-group> \
+               --query identity.principalId -o tsv
+   
+   # Note: For system assigned managed identity, use the principal ID as the client ID
+   # Alternatively, you can find this in the Azure portal under APIM > Identity
+   ```
 
-## 📊 Sample Output
+## 🔥 Storage Account Firewall Configuration
+
+**Important:** If you enable the storage account firewall, you **MUST** configure it to allow access from APIM's system assigned managed identity.
+
+1. **Allow APIM's System Managed Identity through Storage Firewall:**
+   ```bash
+   # Get APIM's system managed identity resource ID
+   APIM_IDENTITY_ID=$(az apim show --name <apim-service-name> \
+                                   --resource-group <apim-resource-group> \
+                                   --query identity.principalId -o tsv)
+   
+   # Add APIM's managed identity to storage account network rules
+   az storage account network-rule add \
+     --account-name <storage-account-name> \
+     --resource-group <storage-resource-group> \
+     --resource-id "/subscriptions/<subscription-id>/resourceGroups/<apim-resource-group>/providers/Microsoft.ApiManagement/service/<apim-service-name>"
+   ```
+
+2. **Alternative: Enable "Allow Azure services" (less secure):**
+   ```bash
+   # This allows all Azure services to access the storage account
+   az storage account update \
+     --name <storage-account-name> \
+     --resource-group <storage-resource-group> \
+     --bypass AzureServices
+   ```
+
+3. **Verify Network Access Rules:**
+   ```bash
+   # Check current network rules
+   az storage account show --name <storage-account-name> \
+                          --resource-group <storage-resource-group> \
+                          --query networkRuleSet
+   ```
+
+**⚠️ Critical:** Without proper firewall configuration, the backup will fail with network access errors even if the managed identity has the correct RBAC permissions.## 📊 Sample Output
 
 ```
-🎯 🚀 Starting Azure API Management Backup Script
+   🎯 🚀 Starting Azure API Management Backup Script
 ============================================================
 📋 Backup Configuration:
    🏢 Tenant ID: 12345678-1234-1234-1234-123456789012
    🔑 Client ID: 87654321-4321-4321-4321-210987654321
    📂 Subscription: 11111111-1111-1111-1111-111111111111
-   🏷️  Resource Group: rg-apim
+   🏷️  APIM RG: rg-apim
+   🏷️  Storage RG: rg-storage
    🌐 APIM Service: my-apim-service
    💾 Storage Account: mystorageaccount
    📁 Container: apim-backups

@@ -176,7 +176,6 @@ function Backup-ApiManagement {
             containerName           = $ContainerName
             backupName              = $BackupName
             accessType              = "SystemAssignedManagedIdentity"
-#           clientId                = $ManagedIdentityClientId
         }
 
         $backupBody = $backupBodyHashtable | ConvertTo-Json
