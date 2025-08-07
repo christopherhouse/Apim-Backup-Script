@@ -169,7 +169,7 @@ function Backup-ApiManagement {
             containerName           = $ContainerName
             backupName              = $BackupName
             accessType              = "UserAssignedManagedIdentity"
-            clientId = $ManagedIdentityClientId
+            clientId                = $ManagedIdentityClientId
         }
 
         $backupBody = $backupBodyHashtable | ConvertTo-Json
@@ -178,6 +178,10 @@ function Backup-ApiManagement {
         Write-ColorOutput "   🗂️  Container: $ContainerName" "Gray"
         Write-ColorOutput "   📄 Backup name: $BackupName" "Gray"
         Write-ColorOutput "   📡 Sending backup request..." "Gray"
+
+    # Pretty print the JSON body (informational only; contains no secrets)
+    Write-ColorOutput "   🧾 Backup Request Body (JSON):" "Gray"
+    Write-Host $backupBody -ForegroundColor DarkGray
         
         $response = Invoke-RestMethod -Uri $backupEndpoint -Method Post -Headers $headers -Body $backupBody
         
