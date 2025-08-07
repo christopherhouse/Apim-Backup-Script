@@ -20,8 +20,11 @@
 .PARAMETER SubscriptionId
     The Azure subscription ID containing the APIM service
 
-.PARAMETER ResourceGroupName
+.PARAMETER ApimResourceGroupName
     The resource group name containing the APIM service
+
+.PARAMETER StorageResourceGroupName
+    The resource group name containing the storage account
 
 .PARAMETER ApimServiceName
     The name of the API Management service to backup
@@ -43,9 +46,10 @@
                       -ClientId "87654321-4321-4321-4321-210987654321" `
                       -ClientSecret "your-client-secret" `
                       -SubscriptionId "11111111-1111-1111-1111-111111111111" `
-                      -ResourceGroupName "rg-apim" `
+                      -ApimResourceGroupName "rg-apim" `
                       -ApimServiceName "my-apim-service" `
                       -StorageAccountName "mystorageaccount" `
+                      -StorageResourceGroupName "rg-storage" `
                       -ManagedIdentityClientId "00000000-0000-0000-0000-000000000000" `
                       -ContainerName "apim-backups" `
                       -BackupName "backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -66,7 +70,10 @@ param(
     [string]$SubscriptionId,
     
     [Parameter(Mandatory = $true)]
-    [string]$ResourceGroupName,
+    [string]$ApimResourceGroupName,
+
+    [Parameter(Mandatory = $true)]
+    [string]$StorageResourceGroupName,
     
     [Parameter(Mandatory = $true)]
     [string]$ApimServiceName,
@@ -143,7 +150,7 @@ function Backup-ApiManagement {
     param(
         [string]$AccessToken,
         [string]$SubscriptionId,
-        [string]$ResourceGroupName,
+        [string]$ApimResourceGroupName,
         [string]$ApimServiceName,
         [string]$StorageAccountName,
         [string]$ManagedIdentityClientId,
@@ -157,7 +164,7 @@ function Backup-ApiManagement {
         # Prepare backup request
     # API version 2024-05-01 supports using a managed identity instead of a storage access key
     $apiVersion = "2024-05-01"
-        $backupEndpoint = "https://management.azure.com/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.ApiManagement/service/$ApimServiceName/backup?api-version=$apiVersion"
+        $backupEndpoint = "https://management.azure.com/subscriptions/$SubscriptionId/resourceGroups/$ApimResourceGroupName/providers/Microsoft.ApiManagement/service/$ApimServiceName/backup?api-version=$apiVersion"
         
         $headers = @{
             "Authorization" = "Bearer $AccessToken"
@@ -168,8 +175,8 @@ function Backup-ApiManagement {
             storageAccount          = $StorageAccountName
             containerName           = $ContainerName
             backupName              = $BackupName
-            accessType              = "UserAssignedManagedIdentity"
-            clientId                = $ManagedIdentityClientId
+            accessType              = "SystemAssignedManagedIdentity"
+#           clientId                = $ManagedIdentityClientId
         }
 
         $backupBody = $backupBodyHashtable | ConvertTo-Json
@@ -179,9 +186,17 @@ function Backup-ApiManagement {
         Write-ColorOutput "   📄 Backup name: $BackupName" "Gray"
         Write-ColorOutput "   📡 Sending backup request..." "Gray"
 
-    # Pretty print the JSON body (informational only; contains no secrets)
-    Write-ColorOutput "   🧾 Backup Request Body (JSON):" "Gray"
-    Write-Host $backupBody -ForegroundColor DarkGray
+        # Pretty print the JSON body (informational only; contains no secrets)
+        Write-ColorOutput "   🧾 Backup Request Body (JSON):" "Gray"
+        Write-Host $backupBody -ForegroundColor DarkGray
+        
+        # DEBUG: Print everything for Postman testing
+        Write-ColorOutput "   🔧 DEBUG INFO FOR POSTMAN OR SOME BULLSHIT LIKE THAT:" "Magenta"
+        Write-ColorOutput "   URL: $backupEndpoint" "Yellow"
+        Write-ColorOutput "   Authorization: Bearer $AccessToken" "Yellow"
+        Write-ColorOutput "   Content-Type: application/json" "Yellow"
+        Write-ColorOutput "   Body:" "Yellow"
+        Write-Host $backupBody -ForegroundColor Yellow
         
         $response = Invoke-RestMethod -Uri $backupEndpoint -Method Post -Headers $headers -Body $backupBody
         
@@ -199,6 +214,32 @@ function Backup-ApiManagement {
         if ($_.Exception.Response) {
             $statusCode = $_.Exception.Response.StatusCode
             Write-ColorOutput "   📊 HTTP Status: $statusCode" "Red"
+            
+            # Try to read the response body for detailed error information
+            try {
+                $responseBody = $_.Exception.Response.GetResponseStream()
+                if ($responseBody) {
+                    $reader = New-Object System.IO.StreamReader($responseBody)
+                    $errorContent = $reader.ReadToEnd()
+                    $reader.Close()
+                    
+                    if (-not [string]::IsNullOrWhiteSpace($errorContent)) {
+                        Write-ColorOutput "   📄 Error Response Body:" "Red"
+                        Write-Host $errorContent -ForegroundColor DarkRed
+                    }
+                }
+            }
+            catch {
+                Write-ColorOutput "   ⚠️  Could not read error response body" "Yellow"
+            }
+            
+            if ($statusCode -eq 409) {
+                $apimResourceId = "/subscriptions/$SubscriptionId/resourceGroups/$ApimResourceGroupName/providers/Microsoft.ApiManagement/service/$ApimServiceName"
+                Write-ColorOutput "   🔁 A backup operation may already be in progress (409 Conflict)." "Yellow"
+                Write-ColorOutput "   🔍 Check Azure Activity Log for existing backup operations." "Yellow"
+                Write-ColorOutput "      Resource ID: $apimResourceId" "DarkGray"
+                Write-ColorOutput "      Hint: az monitor activity-log list --offset 1h --resource-id $apimResourceId | Select-String backup" "DarkGray"
+            }
         }
         throw
     }
@@ -214,7 +255,8 @@ try {
     Write-ColorOutput "   🏢 Tenant ID: $TenantId" "Gray"
     Write-ColorOutput "   🔑 Client ID: $ClientId" "Gray"
     Write-ColorOutput "   📂 Subscription: $SubscriptionId" "Gray"
-    Write-ColorOutput "   🏷️  Resource Group: $ResourceGroupName" "Gray"
+    Write-ColorOutput "   🏷️  APIM RG: $ApimResourceGroupName" "Gray"
+    Write-ColorOutput "   🏷️  Storage RG: $StorageResourceGroupName" "Gray"
     Write-ColorOutput "   🌐 APIM Service: $ApimServiceName" "Gray"
     Write-ColorOutput "   💾 Storage Account: $StorageAccountName" "Gray"
     Write-ColorOutput "   🪪 Managed Identity Client Id: $ManagedIdentityClientId" "Gray"
@@ -227,7 +269,7 @@ try {
     Write-ColorOutput ""
     
     # Step 2: Backup APIM
-    $backupResult = Backup-ApiManagement -AccessToken $accessToken -SubscriptionId $SubscriptionId -ResourceGroupName $ResourceGroupName -ApimServiceName $ApimServiceName -StorageAccountName $StorageAccountName -ManagedIdentityClientId $ManagedIdentityClientId -ContainerName $ContainerName -BackupName $BackupName
+    $backupResult = Backup-ApiManagement -AccessToken $accessToken -SubscriptionId $SubscriptionId -ApimResourceGroupName $ApimResourceGroupName -ApimServiceName $ApimServiceName -StorageAccountName $StorageAccountName -ManagedIdentityClientId $ManagedIdentityClientId -ContainerName $ContainerName -BackupName $BackupName
     
     Write-ColorOutput ""
     Write-ColorOutput "🎉 APIM Backup Process Completed Successfully!" "Green" "✨"
