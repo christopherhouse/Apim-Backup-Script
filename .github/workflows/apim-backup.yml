@@ -1,0 +1,87 @@
+name: 'APIM Backup Workflow'
+
+# Scheduled workflow to backup Azure API Management service
+# Runs daily at 2 AM UTC
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      backup_name_suffix:
+        description: 'Optional suffix for backup name'
+        required: false
+        default: ''
+        type: string
+
+env:
+  SCRIPT_PATH: './Backup-APIM.ps1'
+
+jobs:
+  backup-apim:
+    name: 'Backup Azure API Management'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 'Checkout repository'
+      uses: actions/checkout@v4
+      
+    - name: 'Setup PowerShell'
+      uses: azure/powershell@v2
+      with:
+        inlineScript: |
+          Write-Host "🔍 Validating PowerShell script syntax..."
+          $parseErrors = $null
+          $tokens = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile('${{ env.SCRIPT_PATH }}', [ref]$tokens, [ref]$parseErrors)
+          
+          if ($parseErrors) {
+            Write-Host "❌ PowerShell syntax errors found:" -ForegroundColor Red
+            $parseErrors | ForEach-Object { Write-Host "  - $($_.Message)" -ForegroundColor Red }
+            exit 1
+          } else {
+            Write-Host "✅ PowerShell script syntax is valid" -ForegroundColor Green
+          }
+        azPSVersion: 'latest'
+        
+    - name: 'Azure Login'
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        
+    - name: 'Run APIM Backup Script'
+      uses: azure/powershell@v2
+      with:
+        inlineScript: |
+          $backupName = "${{ vars.BACKUP_NAME }}"
+          if ("${{ github.event.inputs.backup_name_suffix }}" -ne "") {
+            $backupName += "-${{ github.event.inputs.backup_name_suffix }}"
+          }
+          $backupName += "-${{ github.run_number }}"
+          
+          Write-Host "🚀 Starting APIM backup with name: $backupName"
+          
+          & "${{ env.SCRIPT_PATH }}" `
+            -TenantId "${{ secrets.AZURE_TENANT_ID }}" `
+            -ClientId "${{ secrets.AZURE_CLIENT_ID }}" `
+            -ClientSecret "${{ secrets.AZURE_CLIENT_SECRET }}" `
+            -SubscriptionId "${{ secrets.AZURE_SUBSCRIPTION_ID }}" `
+            -ApimResourceGroupName "${{ vars.APIM_RESOURCE_GROUP_NAME }}" `
+            -StorageResourceGroupName "${{ vars.STORAGE_RESOURCE_GROUP_NAME }}" `
+            -ApimServiceName "${{ vars.APIM_SERVICE_NAME }}" `
+            -StorageAccountName "${{ vars.STORAGE_ACCOUNT_NAME }}" `
+            -ManagedIdentityClientId "${{ vars.MANAGED_IDENTITY_CLIENT_ID }}" `
+            -ContainerName "${{ vars.CONTAINER_NAME }}" `
+            -BackupName $backupName
+        azPSVersion: 'latest'
+        
+    - name: 'Upload workflow logs'
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: workflow-logs-${{ github.run_number }}
+        path: |
+          ${{ runner.temp }}/**/*.log
+          /home/runner/.azure/**/*.log
+        retention-days: 30

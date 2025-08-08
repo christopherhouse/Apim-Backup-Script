@@ -1,0 +1,77 @@
+# Azure DevOps Pipeline for APIM Backup
+# This pipeline runs the APIM backup script on a scheduled basis
+# Requires a service connection and variable group to be configured
+
+trigger: none  # No CI trigger, only scheduled
+
+schedules:
+- cron: "0 2 * * *"  # Daily at 2 AM UTC
+  displayName: 'Daily APIM Backup'
+  branches:
+    include:
+    - main
+  always: true  # Run even if there are no code changes
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+- group: 'apim-backup-variables'  # Variable group containing non-sensitive values
+- name: 'scriptPath'
+  value: '$(Build.SourcesDirectory)/Backup-APIM.ps1'
+
+steps:
+- checkout: self
+  displayName: 'Checkout repository'
+
+- task: PowerShell@2
+  displayName: 'Validate PowerShell script syntax'
+  inputs:
+    targetType: 'inline'
+    script: |
+      Write-Host "🔍 Validating PowerShell script syntax..."
+      $parseErrors = $null
+      $tokens = $null
+      $ast = [System.Management.Automation.Language.Parser]::ParseFile('$(scriptPath)', [ref]$tokens, [ref]$parseErrors)
+      
+      if ($parseErrors) {
+        Write-Host "❌ PowerShell syntax errors found:" -ForegroundColor Red
+        $parseErrors | ForEach-Object { Write-Host "  - $($_.Message)" -ForegroundColor Red }
+        exit 1
+      } else {
+        Write-Host "✅ PowerShell script syntax is valid" -ForegroundColor Green
+      }
+    pwsh: true
+
+- task: AzureCLI@2
+  displayName: 'Run APIM Backup Script'
+  inputs:
+    azureSubscription: '$(azureServiceConnection)'  # Service connection name from variable group
+    scriptType: 'pscore'
+    scriptLocation: 'scriptPath'
+    scriptPath: '$(scriptPath)'
+    arguments: >
+      -TenantId "$(tenantId)"
+      -ClientId "$(clientId)" 
+      -ClientSecret "$(clientSecret)"
+      -SubscriptionId "$(subscriptionId)"
+      -ApimResourceGroupName "$(apimResourceGroupName)"
+      -StorageResourceGroupName "$(storageResourceGroupName)"
+      -ApimServiceName "$(apimServiceName)"
+      -StorageAccountName "$(storageAccountName)"
+      -ManagedIdentityClientId "$(managedIdentityClientId)"
+      -ContainerName "$(containerName)"
+      -BackupName "$(backupName)-$(Build.BuildNumber)"
+    powerShellCore: true
+    workingDirectory: '$(Build.SourcesDirectory)'
+  env:
+    # Ensure sensitive variables are passed securely
+    CLIENT_SECRET: $(clientSecret)
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish pipeline logs'
+  condition: always()
+  inputs:
+    pathToPublish: '$(Agent.TempDirectory)'
+    artifactName: 'pipeline-logs'
+    publishLocation: 'Container'
