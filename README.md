@@ -250,6 +250,33 @@ The script includes comprehensive error handling for common scenarios:
 - 📁 Storage account access problems
 - 🚫 API Management service not found
 
+## 🔄 CI/CD Automation
+
+This repository includes pre-configured CI/CD pipelines for automated backups:
+
+### 🔵 Azure DevOps Pipelines
+- **Location**: `.azdo/pipelines/`
+- **Schedule**: Daily at 2 AM UTC
+- **Authentication**: Service Connection with Service Principal
+- **Configuration**: Variable Groups for secure parameter management
+- **Setup Guide**: [Azure DevOps README](.azdo/pipelines/README.md)
+
+### 🟢 GitHub Actions
+- **Location**: `.github/workflows/`
+- **Schedule**: Daily at 2 AM UTC  
+- **Authentication**: Federated Identity Credentials (recommended) or Service Principal
+- **Configuration**: Repository Secrets and Variables
+- **Setup Guide**: [GitHub Actions README](.github/workflows/README.md)
+
+Both pipelines:
+- ✅ Run automatically on cron schedules
+- ✅ Support manual triggering
+- ✅ Include PowerShell syntax validation
+- ✅ Provide comprehensive logging and error handling
+- ✅ Follow security best practices
+
+Choose the platform that fits your organization's infrastructure and follow the respective setup guide for detailed configuration instructions.
+
 ## 🔍 Monitoring Backup Progress
 
 After the script completes, you can monitor the backup progress using:
